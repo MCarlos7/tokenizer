@@ -5,7 +5,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Commands
 
 - Setup: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` (crea `.venv`, instala en modo editable, añade al PATH, crea reglas de firewall si hay administrador, ejecuta `doctor`). Flags: `-SkipFirewall`, `-SkipPath`. Manual: `python -m venv .venv` y `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. En este equipo `python` es un alias de Microsoft Store: usa siempre la ruta del venv.
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (29 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (35 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
 - Diagnóstico: `tokenizer doctor` (estados OK/AVISO/FALLO con solución). Sale con 1 si hay fallos.
 - Entrypoint: `tokenizer` o `python -m tokenizer` (`__main__.py`). Sin subcomando ejecuta `run` (daemon en primer plano).
 - Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `doctor`, `config`, `calibrate --console-percent X` (en el host).
@@ -17,7 +17,8 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - `cli.py`: parser y comandos. `_ensure_configured()` lanza el asistente de `setup` la primera vez si hay TTY.
 - `daemon.py`: proceso por equipo. Envía latidos UDP por broadcast (`255.255.255.255:8766`) cada 5 s, escucha los de otros, elige host y sincroniza su historial. Cada 60 s en clientes, y en el host lee su `opencode.db` y comprueba alertas.
 - `peers.py`: formato del latido (JSON con `app`, `v`, `machine`, `role`, `port`, `fp`, `pairing`), fingerprint de red (sha256 del token, 16 hex), tabla de pares con caducidad de 30 s, y `should_yield`: si dos hosts coexisten, cede el de nombre mayor.
-- `server.py`: `TokenizerHTTPServer` en `0.0.0.0:8765`. Rutas: `POST /api/usage` (requiere cabecera `X-Tokenizer-Token`), `POST /api/pair` (código), `GET /api/status` (JSON), `GET /` y `/index.html` (panel con refresco de 30 s). Cuerpos máximos de 5 MB.
+- `server.py`: `TokenizerHTTPServer` en `0.0.0.0:8765`. Rutas: `POST /api/usage` (requiere cabecera `X-Tokenizer-Token`), `POST /api/pair` (código), `POST /api/calibrate` (formulario, solo desde loopback, responde 303 al panel), `GET /api/status` (JSON), `GET /` y `/index.html` (panel con refresco de 30 s; el formulario de calibración solo aparece desde loopback). Cuerpos máximos de 5 MB.
+- `calibration.py`: regla única de calibración: `factor = porcentaje_consola / estimación_base`, con la estimación sin factor. Lo usan la CLI, el panel y el daemon. Guarda `calibration_factor`, `calibrated_at` y `calibration_base` en la configuración.
 - `pairing.py`: código de 8 caracteres de `23456789ABCDEFGHJKMNPQRSTVWXYZ`, mostrado como `XXXX-XXXX`. Se guarda como sha256 con sal en `pairing.json`. Caduca a 10 min, se invalida al usarse y se bloquea tras 5 fallos. También `find_pairing_host` (escucha UDP) y `request_pairing` (HTTP).
 - `host_store.py`: `host.db` (SQLite) con el historial de todas las máquinas. Clave `(machine, message_id)`, upsert idempotente.
 - `opencode_db.py`: lee `opencode.db` en modo solo lectura (`file:...?mode=ro`). Usa mensajes `assistant` de `session_message` con `tokens` (`input`, `output`, `cache.read`, `cache.write`). `output` ya incluye el razonamiento, por lo que no se suma aparte.
@@ -43,7 +44,8 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - Estado en `%LOCALAPPDATA%\tokenizer\`: `prices.json`, `host.db`, `pairing.json`, `daemon.log`.
 - Los equipos cliente reciben token, plan y `renews_at` durante el emparejamiento.
 - Las alertas y la calibración solo ocurren en el host. Un cliente nunca escribe `host.db`.
-- Intervalos de referencia: latido 5 s, caducidad de par 30 s, arranque 6 s de escucha, sincronización 60 s, alerta por defecto 80 %, aviso de calibración tras 7 días.
+- Intervalos de referencia: latido 5 s, caducidad de par 30 s, arranque 6 s de escucha, sincronización 60 s, alerta por defecto 80 %, aviso de calibración tras 7 días, aviso de recalibrar tras 10 puntos de desvío desde `calibration_base`.
+- Tras cambiar código del daemon, reinicia el proceso (`Stop-Process` y luego `tokenizer start`). Un daemon antiguo sigue sirviendo el código viejo.
 
 ## Gotchas
 

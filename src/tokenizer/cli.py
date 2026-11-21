@@ -19,13 +19,14 @@ from tokenizer.config import (
     save_user_config,
     user_config_path,
 )
+from tokenizer.calibration import CalibrationError, apply_calibration
 from tokenizer.daemon import Daemon
 from tokenizer.doctor import OK, FAIL, WARN, run_checks
 from tokenizer.host_store import HostStore
 from tokenizer.opencode_db import read_usage
 from tokenizer.pairing import find_pairing_host, new_token, open_pairing, request_pairing
 from tokenizer.pricing import load_prices
-from tokenizer.usage import billing_period, compute_windows, model_breakdown, record_percent, utc
+from tokenizer.usage import billing_period, compute_windows, model_breakdown
 
 
 def _format_reset(moment: datetime | None, now: datetime) -> str:
@@ -260,17 +261,12 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     store = HostStore(host_db_path())
     prices = load_prices(cache_dir() / "prices.json", plan=settings.plan)
     records = [record for _, record in store.load()]
-
-    now = datetime.now(timezone.utc)
-    start, end = billing_period(now, settings.renews_at)
-    estimate = sum(record_percent(r, prices) for r in records if start <= utc(r.created_ms) < end)
-    if estimate <= 0:
-        print("No hay uso estimado en el periodo actual; calibra cuando haya uso.")
+    try:
+        base, factor = apply_calibration(records, prices, settings.renews_at, args.console_percent)
+    except CalibrationError as error:
+        print(error)
         return 1
-
-    factor = args.console_percent / estimate
-    save_user_config({"calibration_factor": round(factor, 4), "calibrated_at": now.isoformat()})
-    print(f"Estimación base: {estimate:.2f} %. Consola: {args.console_percent:.2f} %. Factor: {factor:.3f}")
+    print(f"Estimación base: {base:.2f} %. Consola: {args.console_percent:.2f} %. Factor: {factor:.3f}")
     print("Ejecútalo en el host, que tiene el historial de todas las máquinas.")
     return 0
 

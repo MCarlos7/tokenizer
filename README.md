@@ -136,11 +136,12 @@ Recibirás una notificación de Windows en el host cuando:
 
 ## Calibración
 
-La estimación puede diferir de la consola. Para corregirla, anota el porcentaje mensual que muestra la consola y ejecútalo en el host:
+La estimación puede diferir de la consola. Para corregirla, introduce el porcentaje mensual que muestra la consola. Hay dos formas, ambas en el host:
 
-```powershell
-tokenizer calibrate --console-percent 12.5
-```
+- **Panel:** abre `http://localhost:8765`, escribe el porcentaje en el formulario y pulsa Calibrar. El formulario solo aparece en el propio host.
+- **Terminal:** `tokenizer calibrate --console-percent 12.5`
+
+La calibración guarda un factor que iguala la estimación con la consola en ese momento. Tokenizer avisa en dos casos: si no se ha calibrado en 7 días, o si el uso ha subido más de 10 puntos desde la última calibración.
 
 ## Desarrollo
 

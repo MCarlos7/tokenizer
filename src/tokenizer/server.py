@@ -7,7 +7,9 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
 
+from tokenizer.calibration import CalibrationError, apply_calibration
 from tokenizer.config import PEER_TIMEOUT_SECONDS, Settings
 from tokenizer.host_store import HostStore, record_from_dict
 from tokenizer.opencode_db import UsageRecord
@@ -18,6 +20,11 @@ from tokenizer.usage import WINDOW_LABELS, Window, billing_period, compute_windo
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
 TOKEN_HEADER = "X-Tokenizer-Token"
+LOOPBACK_ADDRESSES = ("127.0.0.1", "::1")
+NOTICES = {
+    "calibrated": "Calibración guardada. La estimación ya coincide con la consola en el momento de calibrar.",
+    "calibration_error": "No se pudo calibrar: revisa el porcentaje (entre 0 y 100) y que haya uso en el periodo.",
+}
 
 
 def window_dict(window: Window) -> dict[str, Any]:
@@ -84,6 +91,10 @@ def build_status(
         "generated_at": now.isoformat(),
         "plan": settings.plan,
         "alert_percent": settings.alert_percent,
+        "calibration": {
+            "factor": round(settings.calibration_factor, 4),
+            "calibrated_at": settings.calibrated_at.isoformat() if settings.calibrated_at else None,
+        },
         "machines": machines,
         "total": {
             "windows": [window_dict(w) for w in total_windows],
@@ -109,7 +120,30 @@ def _window_row(window: dict[str, Any], alert_percent: float) -> str:
     )
 
 
-def render_panel(status: dict[str, Any]) -> str:
+def _calibration_block(status: dict[str, Any], show_form: bool, notice: str | None) -> str:
+    calibration = status["calibration"]
+    if calibration["calibrated_at"]:
+        current = (
+            f'Factor actual: {calibration["factor"]:.3f} '
+            f'(calibrado {datetime.fromisoformat(calibration["calibrated_at"]):%d/%m %H:%M} UTC)'
+        )
+    else:
+        current = "Sin calibrar: la estimación puede quedarse corta."
+    parts = []
+    if notice:
+        parts.append(f'<p class="notice">{html.escape(notice)}</p>')
+    if show_form:
+        parts.append(
+            '<form class="calibrate" method="post" action="/api/calibrate">'
+            "<label>Porcentaje mensual que muestra la consola "
+            '<input name="console_percent" type="number" step="0.1" min="0.1" max="100" required></label> '
+            "<button>Calibrar</button></form>"
+        )
+    parts.append(f'<p class="note">{html.escape(current)}</p>')
+    return "".join(parts)
+
+
+def render_panel(status: dict[str, Any], show_form: bool = False, notice: str | None = None) -> str:
     alert = status["alert_percent"]
     cards = []
     for machine in status["machines"]:
@@ -149,10 +183,14 @@ table.models {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 table.models th, table.models td {{ text-align: right; padding: 6px 8px; border-bottom: 1px solid #333; }}
 table.models th:first-child, table.models td:first-child {{ text-align: left; }}
 .note {{ color: #888; font-size: 12px; }}
+.notice {{ background: #1f2d1f; border-radius: 6px; padding: 8px 12px; }}
+form.calibrate {{ margin: 8px 0 4px; }}
+form.calibrate input {{ width: 90px; margin-left: 6px; }}
 </style>
 </head>
 <body>
 <h1>Consumo OpenCode Go · plan {html.escape(status["plan"])}</h1>
+{_calibration_block(status, show_form, notice)}
 <div class="grid">
 <section class="card"><h2>Total <small>todas las máquinas</small></h2>{total_rows}</section>
 <section class="card"><h2>Por modelo <small>total</small></h2>{models_table}</section>
@@ -211,7 +249,8 @@ class TokenizerHandler(BaseHTTPRequestHandler):
         self._send(status, "application/json", json.dumps(payload).encode("utf-8"))
 
     def do_GET(self) -> None:
-        if self.path not in ("/", "/index.html", "/api/status"):
+        route = urlsplit(self.path)
+        if route.path not in ("/", "/index.html", "/api/status"):
             self._send(404, "text/plain; charset=utf-8", b"No encontrado")
             return
         try:
@@ -220,14 +259,43 @@ class TokenizerHandler(BaseHTTPRequestHandler):
             self._send_json(503, {"error": "Sin precios disponibles. Revisa la conexión a internet."})
             return
         status = build_status(self.server.store, self.server.load_settings(), self.server.peers, prices)
-        if self.path == "/api/status":
+        if route.path == "/api/status":
             self._send_json(200, status)
-        else:
-            self._send(200, "text/html; charset=utf-8", render_panel(status).encode("utf-8"))
+            return
+        query = parse_qs(route.query)
+        notice = NOTICES.get(next(iter(query), ""))
+        show_form = self.client_address[0] in LOOPBACK_ADDRESSES
+        self._send(200, "text/html; charset=utf-8", render_panel(status, show_form, notice).encode("utf-8"))
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_calibrate(self) -> None:
+        if self.client_address[0] not in LOOPBACK_ADDRESSES:
+            self._send_json(403, {"error": "La calibración solo se puede hacer desde el propio host"})
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8") if 0 < length <= MAX_BODY_BYTES else ""
+        raw_value = parse_qs(body).get("console_percent", [""])[0]
+        try:
+            console_percent = float(raw_value)
+            prices = self.server.load_prices()
+            records = [record for _, record in self.server.store.load()]
+            apply_calibration(records, prices, self.server.load_settings().renews_at, console_percent)
+        except (ValueError, OSError, CalibrationError):
+            self._redirect("/?calibration_error=1")
+            return
+        self._redirect("/?calibrated=1")
 
     def do_POST(self) -> None:
         if self.path == "/api/pair":
             self._handle_pair()
+            return
+        if self.path == "/api/calibrate":
+            self._handle_calibrate()
             return
         if self.path != "/api/usage":
             self._send_json(404, {"error": "No encontrado"})

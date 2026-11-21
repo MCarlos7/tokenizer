@@ -26,6 +26,7 @@ SYNC_SECONDS = 60
 
 DEFAULT_ALERT_PERCENT = 80.0
 CALIBRATION_MAX_AGE_DAYS = 7
+CALIBRATION_DRIFT_POINTS = 10.0
 
 PLANS = ("go", "go-plus", "go-teams")
 
@@ -86,6 +87,7 @@ class Settings:
     alert_percent: float
     calibration_factor: float
     calibrated_at: datetime | None
+    calibration_base: float | None = None
 
 
 def load_settings() -> Settings:
@@ -99,4 +101,5 @@ def load_settings() -> Settings:
         alert_percent=float(raw.get("alert_percent", DEFAULT_ALERT_PERCENT)),
         calibration_factor=float(raw.get("calibration_factor", 1.0)),
         calibrated_at=parse_datetime(raw["calibrated_at"]) if raw.get("calibrated_at") else None,
+        calibration_base=float(raw["calibration_base"]) if raw.get("calibration_base") is not None else None,
     )

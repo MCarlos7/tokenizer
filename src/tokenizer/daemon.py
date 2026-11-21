@@ -10,6 +10,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from tokenizer.alerts import evaluate_alerts
+from tokenizer.calibration import drift_points
 from tokenizer.config import (
     DEFAULT_PORT,
     DISCOVERY_PORT,
@@ -213,7 +214,9 @@ class Daemon:
             return
         status = build_status(self.store, settings, self.peers, prices)
         now = datetime.now(timezone.utc)
-        current = set(evaluate_alerts(status, settings.alert_percent, settings.calibrated_at, now))
+        records = [record for _, record in self.store.load()]
+        drift = drift_points(records, prices, settings, now)
+        current = set(evaluate_alerts(status, settings.alert_percent, settings.calibrated_at, now, drift))
         for message in sorted(current - self.alerts):
             log(f"ALERTA: {message}")
             notify("Tokenizer", message)
