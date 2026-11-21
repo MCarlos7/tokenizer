@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import time
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,7 @@ from tokenizer.host_store import HostStore
 from tokenizer.opencode_db import read_usage
 from tokenizer.pairing import find_pairing_host, new_token, open_pairing, request_pairing
 from tokenizer.pricing import load_prices
+from tokenizer.service import active_pid, stop_daemon
 from tokenizer.usage import billing_period, compute_windows, model_breakdown
 
 
@@ -139,26 +142,149 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_start(args: argparse.Namespace) -> int:
-    if not _ensure_configured():
-        return 1
+def _launch_daemon() -> bool:
     directory = cache_dir()
     directory.mkdir(parents=True, exist_ok=True)
     log_path = directory / "daemon.log"
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-    with log_path.open("a", encoding="utf-8") as log_file:
-        subprocess.Popen(
-            [sys.executable, "-m", "tokenizer", "run"],
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            creationflags=flags,
-            close_fds=True,
-        )
-    print(f"Tokenizer iniciado en segundo plano. Registro: {log_path}")
+    try:
+        with log_path.open("a", encoding="utf-8") as log_file:
+            subprocess.Popen(
+                [sys.executable, "-m", "tokenizer", "run"],
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=flags,
+                close_fds=True,
+            )
+    except OSError:
+        return False
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        if active_pid() is not None:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    if not _ensure_configured():
+        return 1
+    pid = active_pid()
+    if pid is not None:
+        print(f"Tokenizer ya está activo (PID {pid}).")
+        return 0
+    started = _launch_daemon()
+    if not started:
+        print(f"No pude confirmar el arranque. Revisa el registro: {cache_dir() / 'daemon.log'}")
+        return 1
+    print(f"Tokenizer iniciado en segundo plano. Registro: {cache_dir() / 'daemon.log'}")
     print(f"Panel (en el host): http://localhost:{DEFAULT_PORT}")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    pid = stop_daemon()
+    if pid is not None:
+        print(f"Tokenizer detenido (PID {pid}).")
+        return 0
+    if active_pid() is not None:
+        print("No pude detener Tokenizer. Comprueba permisos o finaliza el proceso desde el Administrador de tareas.")
+        return 1
+    print("Tokenizer no estaba activo en esta máquina.")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    root = Path(__file__).resolve().parents[2]
+
+    def git(*command: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(root), *command],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            return subprocess.CompletedProcess(["git", *command], 1, "", str(error))
+
+    def install_editable() -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", "."],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            return subprocess.CompletedProcess(["pip", "install", "-e", "."], 1, "", str(error))
+
+    top = git("rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        print("Esta instalación no está dentro de un clon Git. Actualízala con pip o reinstala desde el repositorio.")
+        return 1
+    dirty = git("status", "--porcelain", "--untracked-files=normal")
+    if dirty.stdout.strip():
+        print("No actualicé porque hay cambios locales. Guárdalos o haz commit y vuelve a ejecutar tokenizer update.")
+        return 1
+    fetched = git("fetch", "origin")
+    if fetched.returncode != 0:
+        print(f"No pude consultar GitHub: {fetched.stderr.strip() or fetched.stdout.strip()}")
+        return 1
+
+    default_ref = git("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    target = default_ref.stdout.strip() if default_ref.returncode == 0 else "refs/remotes/origin/main"
+    current = git("rev-parse", "HEAD")
+    latest = git("rev-parse", "--verify", target)
+    if current.returncode != 0 or latest.returncode != 0:
+        print("No pude determinar la versión local y la remota de origin.")
+        return 1
+    if current.stdout.strip() == latest.stdout.strip():
+        print("Tokenizer ya está actualizado.")
+        return 0
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = f"backup/tokenizer-before-update-{timestamp}-{os.getpid()}"
+    saved = git("branch", backup, "HEAD")
+    if saved.returncode != 0:
+        print(f"No pude guardar una referencia de respaldo: {saved.stderr.strip()}")
+        return 1
+
+    was_running = active_pid() is not None
+    if was_running and stop_daemon() is None:
+        print("No pude detener Tokenizer; no actualicé archivos mientras el daemon podría estar usándolos.")
+        return 1
+
+    updated = git("reset", "--hard", latest.stdout.strip())
+    installed = install_editable() if updated.returncode == 0 else None
+
+    if updated.returncode != 0 or installed is None or installed.returncode != 0:
+        reason = updated.stderr.strip() if updated.returncode != 0 else installed.stderr.strip() if installed else ""
+        print(f"La actualización falló{': ' + reason if reason else ''}; restauro la versión anterior.")
+        git("reset", "--hard", backup)
+        rollback_install = install_editable()
+        if rollback_install.returncode != 0:
+            print("La restauración del entorno también falló. Revisa la instalación de pip.")
+        if was_running:
+            _launch_daemon()
+        return 1
+
+    print(f"Tokenizer actualizado a {latest.stdout.strip()[:7]}. Respaldo local: {backup}")
+    if was_running:
+        if _launch_daemon():
+            print("Daemon reiniciado con la versión nueva.")
+        else:
+            print(f"No pude reiniciar el daemon. Puedes hacerlo con 'tokenizer start'; log: {cache_dir() / 'daemon.log'}")
     return 0
 
 
@@ -306,6 +432,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = subcommands.add_parser("start", help="Ejecuta Tokenizer en segundo plano.")
     start.set_defaults(handler=cmd_start)
+
+    stop = subcommands.add_parser("stop", help="Detiene solo el daemon de Tokenizer de esta máquina.")
+    stop.set_defaults(handler=cmd_stop)
+
+    update = subcommands.add_parser("update", help="Actualiza el clon limpio desde origin y reinicia el daemon.")
+    update.set_defaults(handler=cmd_update)
 
     status = subcommands.add_parser("status", help="Muestra el consumo de esta máquina.")
     status.add_argument("--db", type=Path, default=None, help="Ruta a opencode.db.")

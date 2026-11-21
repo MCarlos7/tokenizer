@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import socket
 import sqlite3
@@ -31,6 +32,7 @@ from tokenizer.peers import Peer, PeerTable, decode_heartbeat, encode_heartbeat,
 from tokenizer.pairing import pairing_open
 from tokenizer.pricing import load_prices
 from tokenizer.server import TOKEN_HEADER, TokenizerHTTPServer, build_status
+from tokenizer.service import clear_pid, write_pid
 
 UPLOAD_CHUNK = 500
 
@@ -64,6 +66,7 @@ class Daemon:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.bind(("0.0.0.0", DISCOVERY_PORT))
         self.sock.settimeout(1.0)
+        write_pid()
         try:
             threading.Thread(target=self._listen, daemon=True).start()
             log(f"Tokenizer activo como '{self.settings.machine}'. Buscando otros equipos...")
@@ -83,6 +86,7 @@ class Daemon:
                 self.stop_event.wait(HEARTBEAT_SECONDS)
         finally:
             self.stop()
+            clear_pid(os.getpid())
 
     def stop(self) -> None:
         self.stop_event.set()

@@ -104,11 +104,15 @@ tokenizer setup --new --reset-token    # genera un token nuevo; los demás equip
 
 ```powershell
 tokenizer               # ejecuta en primer plano (igual que "tokenizer run")
-tokenizer start         # ejecuta en segundo plano; registro en %LOCALAPPDATA%\tokenizer\daemon.log
+tokenizer start         # ejecuta en segundo plano; evita una segunda instancia
+tokenizer stop          # detiene el daemon de esta máquina, sin tocar los otros equipos
+tokenizer update        # actualiza desde origin y reinicia el daemon si estaba activo
 tokenizer status        # consumo estimado de esta máquina
 tokenizer calibrate --console-percent 12.5   # ejecútalo en el host
 tokenizer config        # muestra la configuración (el token aparece oculto)
 ```
+
+`tokenizer update` exige un clon sin cambios locales sin guardar. Crea una rama local `backup/tokenizer-before-update-*` antes de actualizar y la conserva; si falla la instalación, restaura la versión anterior. También permite actualizar si el historial local diverge del remoto, siempre que el árbol esté limpio.
 
 Panel web: abre `http://IP-DEL-HOST:8765` desde cualquier equipo de la red. La API está en `/api/status`.
 

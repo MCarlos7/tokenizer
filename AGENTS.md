@@ -5,17 +5,17 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Commands
 
 - Setup: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` (crea `.venv`, instala en modo editable, añade al PATH, crea reglas de firewall si hay administrador, ejecuta `doctor`). Flags: `-SkipFirewall`, `-SkipPath`. Manual: `python -m venv .venv` y `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. En este equipo `python` es un alias de Microsoft Store: usa siempre la ruta del venv.
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (38 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (43 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
 - Diagnóstico: `tokenizer doctor` (estados OK/AVISO/FALLO con solución). Sale con 1 si hay fallos.
 - Entrypoint: `tokenizer` o `python -m tokenizer` (`__main__.py`). Sin subcomando ejecuta `run` (daemon en primer plano).
-- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `doctor`, `config`, `calibrate --console-percent X|--reset` (en el host).
+- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start`, `stop` (usa `%LOCALAPPDATA%\tokenizer\daemon.pid` y verifica la línea de comandos; también detecta daemons antiguos), `update` (fetch, exige árbol limpio, guarda rama backup, actualiza/reinstala editable y reinicia si estaba activo), `status`, `doctor`, `config`, `calibrate --console-percent X|--reset`.
 - Prueba de humo del daemon: no hay script en el repo. Construye un `Settings` con token temporal y llama `Daemon(settings).run()` en un hilo; no escribas el token real en scripts.
 - No hay lint, formatter, typecheck ni CI configurados. No inventes comandos de esos.
 
 ## Architecture
 
 - `cli.py`: parser y comandos. `_ensure_configured()` lanza el asistente de `setup` la primera vez si hay TTY.
-- `daemon.py`: proceso por equipo. Envía latidos UDP por broadcast (`255.255.255.255:8766`) cada 5 s, escucha los de otros, elige host y sincroniza su historial. Cada 60 s en clientes, y en el host lee su `opencode.db` y comprueba alertas.
+- `daemon.py`: proceso por equipo. Envía latidos UDP por broadcast (`255.255.255.255:8766`) cada 5 s, escucha los de otros, elige host y sincroniza su historial. Escribe/limpia su PID mediante `service.py`. Cada 60 s en clientes, y en el host lee su `opencode.db` y comprueba alertas.
 - `peers.py`: formato del latido (JSON con `app`, `v`, `machine`, `role`, `port`, `fp`, `pairing`), fingerprint de red (sha256 del token, 16 hex), tabla de pares con caducidad de 30 s, y `should_yield`: si dos hosts coexisten, cede el de nombre mayor.
 - `server.py`: `TokenizerHTTPServer` en `0.0.0.0:8765`. Rutas: `POST /api/usage` (requiere cabecera `X-Tokenizer-Token`), `POST /api/pair` (código), `POST /api/calibrate` (formulario, solo desde loopback, responde 303 al panel), `GET /api/status` (JSON), `GET /` y `/index.html` (panel con refresco de 30 s; el formulario de calibración solo aparece desde loopback). Cuerpos máximos de 5 MB.
 - `calibration.py`: regla única de calibración: `factor = porcentaje_consola / estimación_base`, con la estimación sin factor. Lo usan la CLI, el panel y el daemon. Guarda `calibration_factor`, `calibrated_at` y `calibration_base` en la configuración.
@@ -26,6 +26,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - `usage.py`: cálculo de ventanas (ver Domain). `record_percent` = `coste / límite_del_modelo * 100 * factor`.
 - `alerts.py` y `notify.py`: mensajes estables (sin porcentaje exacto, para no repetir avisos) y notificación de escritorio con PowerShell en Windows.
 - `doctor.py`: comprobaciones independientes que devuelven `Check(name, status, detail, fix)`. Las puras (`check_config`, `check_opencode_db`) tienen tests; el resto depende del sistema.
+- `service.py`: PID file y detención acotada a procesos cuya línea de comandos identifica `tokenizer run`. El fallback por command line permite detener versiones antiguas sin PID file.
 - `scripts/install.ps1`: instalador. Los nombres de reglas de firewall deben coincidir con `FIREWALL_RULES` en `config.py`; si cambias uno, cambia el otro.
 - `opencode-plugin/`: plugin TypeScript que llama a `tokenizer start` al cargarse. Sin lockfile ni build y sin probar contra `@opencode/plugin`.
 
@@ -41,7 +42,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Config, state and paths
 
 - Configuración de usuario: `%APPDATA%\tokenizer\config.json`. Contiene `token`, `machine`, `plan`, `renews_at`, `db`, `alert_percent`, `calibration_factor`, `calibrated_at`. Carga con `load_settings()`.
-- Estado en `%LOCALAPPDATA%\tokenizer\`: `prices.json`, `host.db`, `pairing.json`, `daemon.log`.
+- Estado en `%LOCALAPPDATA%\tokenizer\`: `prices.json`, `host.db`, `pairing.json`, `daemon.log`, `daemon.pid`.
 - Los equipos cliente reciben token, plan y `renews_at` durante el emparejamiento.
 - Las alertas y la calibración solo ocurren en el host. Un cliente nunca escribe `host.db`.
 - Intervalos de referencia: latido 5 s, caducidad de par 30 s, arranque 6 s de escucha, sincronización 60 s, alerta por defecto 80 %, aviso de calibración tras 7 días, aviso de recalibrar tras 10 puntos de desvío desde `calibration_base`.
