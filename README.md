@@ -14,7 +14,7 @@ OpenCode Go limita el uso con tres ventanas, todas expresadas como porcentaje de
 
 Cada modelo tiene un límite mensual en dólares (`go.monthly_usage` en el [catálogo de Go](https://opencode.ai/inference/go/v1/models)). Una petición consume `coste / límite del modelo` de tu asignación. Por ejemplo, $1.50 en un modelo con límite de $15 equivale al 10 %.
 
-Tokenizer lee el historial local de OpenCode (`opencode.db`) en modo solo lectura. **Es una estimación**: no incluye el doble coste de algunas horas punta ni los precios de contexto largo. Puedes corregirla con `tokenizer calibrate`.
+Tokenizer lee el historial local de OpenCode (`opencode.db`) en modo solo lectura. Aplica los precios por contexto del catálogo y el coste de escritura de caché. **Sigue siendo una estimación** si OpenCode Go aplica multiplicadores horarios u otras reglas que no estén en el catálogo.
 
 ### Red: un host y varios clientes
 
@@ -141,7 +141,9 @@ La estimación puede diferir de la consola. Para corregirla, introduce el porcen
 - **Panel:** abre `http://localhost:8765`, escribe el porcentaje en el formulario y pulsa Calibrar. El formulario solo aparece en el propio host.
 - **Terminal:** `tokenizer calibrate --console-percent 12.5`
 
-La calibración guarda un factor que iguala la estimación con la consola en ese momento. Tokenizer avisa en dos casos: si no se ha calibrado en 7 días, o si el uso ha subido más de 10 puntos desde la última calibración.
+La calibración guarda un factor que iguala la estimación con la consola en ese momento. Si calibraste anteriormente, Tokenizer avisa si pasan 7 días o si el uso sube más de 10 puntos desde la calibración. Sin una calibración manual, el factor se mantiene neutro en `1.0`.
+
+La calibración es opcional y debe revisarse tras cambios importantes en el catálogo. Si el factor anterior compensaba precios que ahora se calculan correctamente, ejecuta `tokenizer calibrate --reset` para volver a `1.0`.
 
 ## Desarrollo
 

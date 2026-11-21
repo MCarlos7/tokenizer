@@ -5,10 +5,10 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Commands
 
 - Setup: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` (crea `.venv`, instala en modo editable, añade al PATH, crea reglas de firewall si hay administrador, ejecuta `doctor`). Flags: `-SkipFirewall`, `-SkipPath`. Manual: `python -m venv .venv` y `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. En este equipo `python` es un alias de Microsoft Store: usa siempre la ruta del venv.
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (35 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (38 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
 - Diagnóstico: `tokenizer doctor` (estados OK/AVISO/FALLO con solución). Sale con 1 si hay fallos.
 - Entrypoint: `tokenizer` o `python -m tokenizer` (`__main__.py`). Sin subcomando ejecuta `run` (daemon en primer plano).
-- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `doctor`, `config`, `calibrate --console-percent X` (en el host).
+- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `doctor`, `config`, `calibrate --console-percent X|--reset` (en el host).
 - Prueba de humo del daemon: no hay script en el repo. Construye un `Settings` con token temporal y llama `Daemon(settings).run()` en un hilo; no escribas el token real en scripts.
 - No hay lint, formatter, typecheck ni CI configurados. No inventes comandos de esos.
 
@@ -22,7 +22,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - `pairing.py`: código de 8 caracteres de `23456789ABCDEFGHJKMNPQRSTVWXYZ`, mostrado como `XXXX-XXXX`. Se guarda como sha256 con sal en `pairing.json`. Caduca a 10 min, se invalida al usarse y se bloquea tras 5 fallos. También `find_pairing_host` (escucha UDP) y `request_pairing` (HTTP).
 - `host_store.py`: `host.db` (SQLite) con el historial de todas las máquinas. Clave `(machine, message_id)`, upsert idempotente.
 - `opencode_db.py`: lee `opencode.db` en modo solo lectura (`file:...?mode=ro`). Usa mensajes `assistant` de `session_message` con `tokens` (`input`, `output`, `cache.read`, `cache.write`). `output` ya incluye el razonamiento, por lo que no se suma aparte.
-- `pricing.py`: parsea `data[]` del catálogo de Go. Usa `go.monthly_usage[plan]` como límite en USD, `cost.text` como precio por millón. Caché en `%LOCALAPPDATA%\tokenizer\prices.json` durante 24 h. Si falla la red y hay caché, usa la caché.
+- `pricing.py`: parsea `data[]` del catálogo de Go. Usa `go.monthly_usage[plan]` como límite en USD, `cost.text` como precio por millón, aplica overrides `when.context.gt` y para `cache.write` por TTL usa la tarifa más corta (verificada contra los request logs del usuario: 376 solicitudes pagadas coinciden en total a menos de un microdólar). Caché en `%LOCALAPPDATA%\tokenizer\prices.json` durante 24 h. Si falla la red y hay caché, usa la caché.
 - `usage.py`: cálculo de ventanas (ver Domain). `record_percent` = `coste / límite_del_modelo * 100 * factor`.
 - `alerts.py` y `notify.py`: mensajes estables (sin porcentaje exacto, para no repetir avisos) y notificación de escritorio con PowerShell en Windows.
 - `doctor.py`: comprobaciones independientes que devuelven `Check(name, status, detail, fix)`. Las puras (`check_config`, `check_opencode_db`) tienen tests; el resto depende del sistema.
@@ -36,7 +36,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - Modelos con `monthly_usage` `null` (gratuitos o sin límite publicado) no suman consumo.
 - Solo cuentan los registros de proveedor `opencode-go`.
 - `tokenizer status` muestra por modelo: gasto en USD, % del plan, límite de referencia y "Disponible" (`límite × % mensual restante`, lo que quedaría si solo usaras ese modelo). No existen límites individuales separados. Lógica en `usage.model_breakdown`.
-- Los precios de horas punta (multiplicadores) y de contexto largo no se modelan; `calibrate` corrige la estimación con el porcentaje de la consola.
+- Se modelan los overrides por contexto y la tarifa corta de escritura de caché. Los multiplicadores horarios del catálogo siguen sin modelarse; `calibrate` es un ajuste manual opcional.
 
 ## Config, state and paths
 
@@ -59,5 +59,5 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Repository rules
 
 - El repo es público. No añadas nombres de usuario, correos, rutas personales ni tokens a archivos versionados. La licencia (`LICENSE`) lleva `MCarlos7` por petición del dueño; no la cambies.
-- Commits con la identidad local del repo (`Tokenizer Contributors <tokenizer@users.noreply.github.com>`). No uses la identidad global.
+- Commits con la identidad local verificada del dueño: `MCarlos7 <203863810+MCarlos7@users.noreply.github.com>`. No uses la identidad global.
 - Remoto `origin` es GitHub (`MCarlos7/tokenizer`), rama `main`. Trabaja sobre `main` salvo que el usuario pida otra cosa.

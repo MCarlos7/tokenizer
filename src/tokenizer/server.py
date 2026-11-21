@@ -128,7 +128,7 @@ def _calibration_block(status: dict[str, Any], show_form: bool, notice: str | No
             f'(calibrado {datetime.fromisoformat(calibration["calibrated_at"]):%d/%m %H:%M} UTC)'
         )
     else:
-        current = "Sin calibrar: la estimación puede quedarse corta."
+        current = "Factor neutro: usa los precios del catálogo. Puedes calibrar si difiere de la consola."
     parts = []
     if notice:
         parts.append(f'<p class="notice">{html.escape(notice)}</p>')

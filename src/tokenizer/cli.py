@@ -257,6 +257,19 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
+    if args.reset:
+        save_user_config(
+            {
+                "calibration_factor": 1.0,
+                "calibrated_at": None,
+                "calibration_base": None,
+            }
+        )
+        print("Calibración reiniciada. Se usan directamente los precios del catálogo.")
+        return 0
+    if args.console_percent is None:
+        print("Indica --console-percent X o --reset.")
+        return 2
     settings = load_settings()
     store = HostStore(host_db_path())
     prices = load_prices(cache_dir() / "prices.json", plan=settings.plan)
@@ -312,7 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
     config.set_defaults(handler=cmd_config)
 
     calibrate = subcommands.add_parser("calibrate", help="Ajusta la estimación con el porcentaje de la consola.")
-    calibrate.add_argument("--console-percent", type=float, required=True, help="Porcentaje mensual que muestra la consola.")
+    calibrate.add_argument("--console-percent", type=float, default=None, help="Porcentaje mensual que muestra la consola.")
+    calibrate.add_argument("--reset", action="store_true", help="Vuelve al factor neutro 1.0 y borra la calibración.")
     calibrate.set_defaults(handler=cmd_calibrate)
     return parser
 

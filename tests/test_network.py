@@ -119,7 +119,7 @@ def test_alerts_trigger_on_threshold_and_calibration(tmp_path):
     messages = evaluate_alerts(status, alert_percent=80.0, calibrated_at=None, now=now)
 
     assert any("5 horas" in m or "de 5 horas" in m for m in messages)
-    assert any("calibrar" in m for m in messages)
+    assert not any("calibrar" in m for m in messages)
 
 
 def test_panel_renders_machine_names_escaped(tmp_path):

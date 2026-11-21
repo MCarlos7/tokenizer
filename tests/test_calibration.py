@@ -82,6 +82,18 @@ def test_drift_alert_appears_only_after_threshold():
     assert any("recalibrar" in message for message in loud)
 
 
+def test_no_calibration_is_not_an_alert_when_using_catalog_prices():
+    messages = evaluate_alerts(
+        {"total": {"windows": []}},
+        alert_percent=80.0,
+        calibrated_at=None,
+        now=NOW,
+        drift=0.0,
+    )
+
+    assert messages == []
+
+
 def test_calibrate_form_from_host_updates_config(tmp_path):
     store = HostStore(tmp_path / "host.db")
     store.upsert("PC-A", [record("a", datetime.now(timezone.utc) - timedelta(hours=1), 1_000_000)])

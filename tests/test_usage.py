@@ -111,3 +111,73 @@ def test_parse_models_reads_plan_limit_and_prices():
     assert prices["model-a"].monthly_limit == 15
     assert prices["model-a"].output == 0.5
     assert prices["beam-free"].monthly_limit is None
+
+
+def test_cache_write_ttl_and_long_context_price_match_go_request_log():
+    payload = {
+        "data": [
+            {
+                "id": "claude-haiku-5-5",
+                "cost": {
+                    "text": {
+                        "input": {
+                            "price": 0.1,
+                            "cache": {"read": 0.01, "write": 0.125},
+                            "overrides": [
+                                {
+                                    "when": {"context": {"gt": 100000}},
+                                    "price": 0.5,
+                                    "cache": {"read": 0.05, "write": 0.625},
+                                }
+                            ],
+                        },
+                        "output": {
+                            "price": 0.5,
+                            "overrides": [{"when": {"context": {"gt": 100000}}, "price": 2.5}],
+                        },
+                    }
+                },
+                "go": {"monthly_usage": {"go": 15}},
+            }
+        ]
+    }
+    price = parse_models(payload)["claude-haiku-5-5"]
+    request = UsageRecord(
+        message_id="anonymized-sample",
+        provider="opencode-go",
+        model="claude-haiku-5-5",
+        created_ms=at(2026, 11, 21, 12, 0),
+        input=2,
+        output=1018,
+        cache_read=327950,
+        cache_write=4581,
+    )
+
+    # Anonymized request-log cost: $0.02180663.
+    assert abs(price.cost(request) - 0.02180663) < 1e-8
+
+
+def test_cache_write_ttl_uses_shortest_catalog_price():
+    payload = {
+        "data": [
+            {
+                "id": "gpt-6-luna",
+                "cost": {
+                    "text": {
+                        "input": {
+                            "price": 0.1,
+                            "cache": {"read": 0.01, "write": {"12h": 0.25, "30m": 0.125}},
+                        },
+                        "output": {"price": 0.5},
+                    }
+                },
+                "go": {"monthly_usage": {"go": 15}},
+            }
+        ]
+    }
+
+    price = parse_models(payload)["gpt-6-luna"]
+
+    assert price.cache_write == 0.125
+    request = UsageRecord("sample", "opencode-go", "gpt-6-luna", at(2026, 11, 21, 12), 0, 0, 0, 100_000)
+    assert price.cost(request) == 0.0125
