@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from tokenizer.opencode_db import UsageRecord
 from tokenizer.pricing import ModelPrice, parse_models
-from tokenizer.usage import compute_windows
+from tokenizer.usage import compute_windows, model_breakdown
 
 PRICES = {"model-a": ModelPrice(input=0, output=1.0, cache_read=0, cache_write=0, monthly_limit=10.0)}
 
@@ -74,6 +74,24 @@ def test_monthly_window_follows_renewal_date():
 
     assert round(monthly.used_percent, 6) == 15.0
     assert monthly.resets_at == datetime(2026, 12, 18, 23, 0, tzinfo=timezone.utc)
+
+
+def test_model_breakdown_reports_cost_and_equivalent_remaining():
+    prices = {"model-a": ModelPrice(input=0, output=1.0, cache_read=0, cache_write=0, monthly_limit=10.0)}
+    records = [record(at(2026, 11, 2, 9, 0), 2_000_000), record(at(2026, 11, 3, 9, 0), 1_000_000)]
+
+    rows = model_breakdown(
+        records,
+        prices,
+        since=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        remaining_percent=75.0,
+    )
+
+    assert len(rows) == 1
+    assert round(rows[0].cost_usd, 6) == 3.0
+    assert round(rows[0].percent, 6) == 30.0
+    assert rows[0].monthly_limit == 10.0
+    assert round(rows[0].equivalent_remaining_usd, 6) == 7.5
 
 
 def test_parse_models_reads_plan_limit_and_prices():

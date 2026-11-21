@@ -24,7 +24,7 @@ from tokenizer.host_store import HostStore
 from tokenizer.opencode_db import read_usage
 from tokenizer.pairing import find_pairing_host, new_token, open_pairing, request_pairing
 from tokenizer.pricing import load_prices
-from tokenizer.usage import billing_period, compute_windows, record_percent, usage_by_model, utc
+from tokenizer.usage import billing_period, compute_windows, model_breakdown, record_percent, utc
 
 
 def _format_reset(moment: datetime | None, now: datetime) -> str:
@@ -187,14 +187,30 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"  {_format_reset(window.resets_at, now)}"
         )
 
-    by_model = usage_by_model(records, prices, since=period_start, until=period_end, factor=factor)
+    monthly = next(window for window in windows if window.name == "monthly")
+    rows = model_breakdown(
+        records,
+        prices,
+        since=period_start,
+        until=period_end,
+        factor=factor,
+        remaining_percent=monthly.remaining_percent,
+    )
     print()
-    if by_model:
-        print("Por modelo (periodo actual, % del límite mensual del plan):")
-        for model, percent in by_model.items():
-            print(f"  {model:<28}{percent:>7.2f}%")
-    else:
+    if not rows:
         print("Sin uso de modelos de pago en el periodo actual.")
+        return 0
+    print("Por modelo (periodo actual):")
+    print(f"  {'Modelo':<24}{'Gasto':>10}{'% plan':>10}{'Límite ref.':>13}{'Disponible*':>13}")
+    for row in rows:
+        print(
+            f"  {row.model:<24}"
+            f"{'$' + format(row.cost_usd, '.2f'):>10}"
+            f"{row.percent:>9.2f}%"
+            f"{'$' + format(row.monthly_limit, '.2f'):>13}"
+            f"{'$' + format(row.equivalent_remaining_usd, '.2f'):>13}"
+        )
+    print("  * Los modelos comparten una sola asignación. Disponible = lo que te quedaría si usaras solo ese modelo.")
     return 0
 
 

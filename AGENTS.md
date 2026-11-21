@@ -31,7 +31,7 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - Ventanas: 5 h (20 %) desde el primer uso, semanal (50 %) que reinicia lunes 00:00 UTC, mensual (100 %) desde la renovación (`renews_at`). Sin `renews_at`, usa meses naturales en UTC.
 - Modelos con `monthly_usage` `null` (gratuitos o sin límite publicado) no suman consumo.
 - Solo cuentan los registros de proveedor `opencode-go`.
-- `tokenizer status` muestra porcentajes por modelo; no existen límites individuales separados.
+- `tokenizer status` muestra por modelo: gasto en USD, % del plan, límite de referencia y "Disponible" (`límite × % mensual restante`, lo que quedaría si solo usaras ese modelo). No existen límites individuales separados. Lógica en `usage.model_breakdown`.
 - Los precios de horas punta (multiplicadores) y de contexto largo no se modelan; `calibrate` corrige la estimación con el porcentaje de la consola.
 
 ## Config, state and paths

@@ -125,6 +125,49 @@ def compute_windows(
     ]
 
 
+@dataclass(frozen=True)
+class ModelUsage:
+    model: str
+    cost_usd: float
+    percent: float
+    monthly_limit: float
+    equivalent_remaining_usd: float
+
+
+def model_breakdown(
+    records: list[UsageRecord],
+    prices: dict[str, ModelPrice],
+    since: datetime,
+    until: datetime | None = None,
+    factor: float = 1.0,
+    remaining_percent: float = 100.0,
+) -> list[ModelUsage]:
+    """Gasto por modelo en dólares y el equivalente disponible si solo usaras ese modelo."""
+    costs: dict[str, float] = {}
+    for record in records:
+        moment = utc(record.created_ms)
+        if record.provider != PROVIDER or moment < since or (until is not None and moment >= until):
+            continue
+        price = prices.get(record.model)
+        if price is None or not price.monthly_limit:
+            continue
+        costs[record.model] = costs.get(record.model, 0.0) + price.cost(record) * factor
+
+    rows = []
+    for model, cost in costs.items():
+        limit = prices[model].monthly_limit or 0.0
+        rows.append(
+            ModelUsage(
+                model=model,
+                cost_usd=cost,
+                percent=cost / limit * 100,
+                monthly_limit=limit,
+                equivalent_remaining_usd=limit * remaining_percent / 100,
+            )
+        )
+    return sorted(rows, key=lambda row: row.percent, reverse=True)
+
+
 def usage_by_model(
     records: list[UsageRecord],
     prices: dict[str, ModelPrice],
