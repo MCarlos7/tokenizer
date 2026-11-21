@@ -104,6 +104,10 @@ def test_status_separates_machines_and_totals(tmp_path):
     assert by_name["PC-A"]["online"] is True
     assert by_name["PC-B"]["online"] is False
     assert status["total"]["windows"][0]["used_percent"] == 15.0
+    models = status["total"]["models"]
+    assert [m["model"] for m in models] == ["model-a"]
+    assert round(models[0]["cost_usd"], 6) == 1.5
+    assert round(models[0]["percent"], 6) == 15.0
 
 
 def test_alerts_trigger_on_threshold_and_calibration(tmp_path):

@@ -4,10 +4,11 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 
 ## Commands
 
-- Setup: `python -m venv .venv` y luego `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. En este equipo `python` es un alias de Microsoft Store: usa siempre la ruta del venv.
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (23 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
+- Setup: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` (crea `.venv`, instala en modo editable, añade al PATH, crea reglas de firewall si hay administrador, ejecuta `doctor`). Flags: `-SkipFirewall`, `-SkipPath`. Manual: `python -m venv .venv` y `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. En este equipo `python` es un alias de Microsoft Store: usa siempre la ruta del venv.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (29 tests, sin red ni daemon). Un test: `-m pytest tests/test_usage.py::test_name`.
+- Diagnóstico: `tokenizer doctor` (estados OK/AVISO/FALLO con solución). Sale con 1 si hay fallos.
 - Entrypoint: `tokenizer` o `python -m tokenizer` (`__main__.py`). Sin subcomando ejecuta `run` (daemon en primer plano).
-- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `config`, `calibrate --console-percent X` (en el host).
+- Subcomandos: `setup [--new|--join]`, `pair` (en el host), `run`, `start` (segundo plano, log en `%LOCALAPPDATA%\tokenizer\daemon.log`), `status` (consumo local), `doctor`, `config`, `calibrate --console-percent X` (en el host).
 - Prueba de humo del daemon: no hay script en el repo. Construye un `Settings` con token temporal y llama `Daemon(settings).run()` en un hilo; no escribas el token real en scripts.
 - No hay lint, formatter, typecheck ni CI configurados. No inventes comandos de esos.
 
@@ -23,6 +24,8 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 - `pricing.py`: parsea `data[]` del catálogo de Go. Usa `go.monthly_usage[plan]` como límite en USD, `cost.text` como precio por millón. Caché en `%LOCALAPPDATA%\tokenizer\prices.json` durante 24 h. Si falla la red y hay caché, usa la caché.
 - `usage.py`: cálculo de ventanas (ver Domain). `record_percent` = `coste / límite_del_modelo * 100 * factor`.
 - `alerts.py` y `notify.py`: mensajes estables (sin porcentaje exacto, para no repetir avisos) y notificación de escritorio con PowerShell en Windows.
+- `doctor.py`: comprobaciones independientes que devuelven `Check(name, status, detail, fix)`. Las puras (`check_config`, `check_opencode_db`) tienen tests; el resto depende del sistema.
+- `scripts/install.ps1`: instalador. Los nombres de reglas de firewall deben coincidir con `FIREWALL_RULES` en `config.py`; si cambias uno, cambia el otro.
 - `opencode-plugin/`: plugin TypeScript que llama a `tokenizer start` al cargarse. Sin lockfile ni build y sin probar contra `@opencode/plugin`.
 
 ## Domain (verificado en el catálogo y en docs de Go)

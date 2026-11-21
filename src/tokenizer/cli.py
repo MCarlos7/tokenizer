@@ -20,6 +20,7 @@ from tokenizer.config import (
     user_config_path,
 )
 from tokenizer.daemon import Daemon
+from tokenizer.doctor import OK, FAIL, WARN, run_checks
 from tokenizer.host_store import HostStore
 from tokenizer.opencode_db import read_usage
 from tokenizer.pairing import find_pairing_host, new_token, open_pairing, request_pairing
@@ -214,6 +215,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    checks = run_checks(settings, args.db or settings.db)
+    for check in checks:
+        print(f"[{check.status:<5}] {check.name}: {check.detail}")
+        if check.fix and check.status != OK:
+            print(f"          → {check.fix}")
+    failures = sum(1 for check in checks if check.status == FAIL)
+    warnings = sum(1 for check in checks if check.status == WARN)
+    print()
+    print(f"Resultado: {failures} fallo(s), {warnings} aviso(s).")
+    return 1 if failures else 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     changes: dict[str, object] = {}
     if args.renews_at:
@@ -287,6 +302,10 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--db", type=Path, default=None, help="Ruta a opencode.db.")
     status.add_argument("--plan", choices=PLANS, default=None, help="Plan de Go contratado.")
     status.set_defaults(handler=cmd_status)
+
+    doctor = subcommands.add_parser("doctor", help="Revisa la configuración y dice cómo arreglar lo que falle.")
+    doctor.add_argument("--db", type=Path, default=None, help="Ruta a opencode.db a comprobar.")
+    doctor.set_defaults(handler=cmd_doctor)
 
     config = subcommands.add_parser("config", help="Muestra o cambia opciones de este equipo.")
     config.add_argument("--machine", default=None, help="Nombre de este equipo.")

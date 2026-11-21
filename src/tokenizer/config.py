@@ -15,6 +15,10 @@ CACHE_MAX_AGE_SECONDS = 24 * 3600
 # Panel y API HTTP (host) y descubrimiento por UDP en la red local.
 DEFAULT_PORT = 8765
 DISCOVERY_PORT = 8766
+FIREWALL_RULES = {
+    "Tokenizer HTTP 8765": ("TCP", DEFAULT_PORT),
+    "Tokenizer descubrimiento 8766": ("UDP", DISCOVERY_PORT),
+}
 HEARTBEAT_SECONDS = 5
 PEER_TIMEOUT_SECONDS = 30
 STARTUP_LISTEN_SECONDS = 6

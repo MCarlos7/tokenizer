@@ -33,15 +33,31 @@ Tokenizer lee el historial local de OpenCode (`opencode.db`) en modo solo lectur
 
 ## Instalación
 
-En cada equipo:
+En cada equipo, desde PowerShell:
 
 ```powershell
 git clone <URL-del-repositorio>
 cd tokenizer
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+El script crea el entorno virtual `.venv`, instala Tokenizer, añade `.venv\Scripts` al PATH del usuario, crea las reglas de firewall (solo si lo ejecutas como administrador) y termina con un diagnóstico. Opciones: `-SkipFirewall` y `-SkipPath`.
+
+Instalación manual, si lo prefieres:
+
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
+
+### Diagnóstico
+
+```powershell
+tokenizer doctor
+```
+
+Revisa el token, la renovación, el historial de OpenCode, los precios, los puertos, el firewall, el servicio local y el plugin. Cada aviso o fallo incluye la solución concreta. Sale con código 1 si hay fallos.
 
 ### Primer equipo (crea la red)
 

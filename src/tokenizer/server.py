@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import html
 import json
+from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
@@ -13,7 +14,7 @@ from tokenizer.opencode_db import UsageRecord
 from tokenizer.pairing import redeem
 from tokenizer.peers import PeerTable
 from tokenizer.pricing import ModelPrice
-from tokenizer.usage import WINDOW_LABELS, Window, compute_windows, utc
+from tokenizer.usage import WINDOW_LABELS, Window, billing_period, compute_windows, model_breakdown, utc
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
 TOKEN_HEADER = "X-Tokenizer-Token"
@@ -68,12 +69,26 @@ def build_status(
         )
 
     all_records = [record for _, record in rows]
+    total_windows = compute_windows(all_records, **options)
+    monthly = next(w for w in total_windows if w.name == "monthly")
+    period_start, period_end = billing_period(now, settings.renews_at)
+    models = model_breakdown(
+        all_records,
+        prices,
+        since=period_start,
+        until=period_end,
+        factor=settings.calibration_factor,
+        remaining_percent=monthly.remaining_percent,
+    )
     return {
         "generated_at": now.isoformat(),
         "plan": settings.plan,
         "alert_percent": settings.alert_percent,
         "machines": machines,
-        "total": {"windows": [window_dict(w) for w in compute_windows(all_records, **options)]},
+        "total": {
+            "windows": [window_dict(w) for w in total_windows],
+            "models": [asdict(m) for m in models],
+        },
     }
 
 
@@ -104,6 +119,13 @@ def render_panel(status: dict[str, Any]) -> str:
             f'<section class="card"><h2>{html.escape(machine["name"])} <small>{state}</small></h2>{rows}</section>'
         )
     total_rows = "".join(_window_row(w, alert) for w in status["total"]["windows"])
+    model_rows = "".join(_model_row(m) for m in status["total"]["models"]) or "<p>Sin uso de modelos de pago.</p>"
+    models_table = (
+        '<table class="models"><tr><th>Modelo</th><th>Gasto</th><th>% plan</th>'
+        '<th>Límite ref.</th><th>Disponible*</th></tr>'
+        f"{model_rows}</table>"
+        '<p class="note">* Los modelos comparten una sola asignación. Disponible = lo que te quedaría si usaras solo ese modelo.</p>'
+    )
     return f"""<!doctype html>
 <html lang="es">
 <head>
@@ -123,18 +145,35 @@ h1 {{ font-size: 20px; }}
 .bar.danger span {{ background: #f85149; }}
 .value, .reset {{ grid-column: 2; font-size: 13px; color: #bbb; }}
 .name {{ font-size: 13px; }}
+table.models {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+table.models th, table.models td {{ text-align: right; padding: 6px 8px; border-bottom: 1px solid #333; }}
+table.models th:first-child, table.models td:first-child {{ text-align: left; }}
+.note {{ color: #888; font-size: 12px; }}
 </style>
 </head>
 <body>
 <h1>Consumo OpenCode Go · plan {html.escape(status["plan"])}</h1>
 <div class="grid">
 <section class="card"><h2>Total <small>todas las máquinas</small></h2>{total_rows}</section>
+<section class="card"><h2>Por modelo <small>total</small></h2>{models_table}</section>
 {"".join(cards)}
 </div>
 <p style="color:#666;font-size:12px">Generado {html.escape(status["generated_at"])}. Se actualiza cada 30 s. Estimación; compara con la consola.</p>
 </body>
 </html>
 """
+
+
+def _model_row(model: dict[str, Any]) -> str:
+    return (
+        "<tr>"
+        f'<td>{html.escape(model["model"])}</td>'
+        f'<td>${model["cost_usd"]:.2f}</td>'
+        f'<td>{model["percent"]:.2f} %</td>'
+        f'<td>${model["monthly_limit"]:.2f}</td>'
+        f'<td>${model["equivalent_remaining_usd"]:.2f}</td>'
+        "</tr>"
+    )
 
 
 class TokenizerHTTPServer(ThreadingHTTPServer):
