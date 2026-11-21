@@ -59,5 +59,5 @@ Tokenizer: monitor de cuotas de OpenCode Go para varias máquinas Windows en red
 ## Repository rules
 
 - El repo es público. No añadas nombres de usuario, correos, rutas personales ni tokens a archivos versionados. La licencia (`LICENSE`) lleva `MCarlos7` por petición del dueño; no la cambies.
-- Commits con la identidad local verificada del dueño: `MCarlos7 <203863810+MCarlos7@users.noreply.github.com>`. No uses la identidad global.
-- Remoto `origin` es GitHub (`MCarlos7/tokenizer`), rama `main`. Trabaja sobre `main` salvo que el usuario pida otra cosa.
+- Commits con la identidad local verificada de GitHub ya configurada en este repo. No uses la identidad global ni añadas el correo/usuario a documentación.
+- Remoto `origin` es GitHub, rama `main`. Trabaja sobre `main` salvo que el usuario pida otra cosa.
