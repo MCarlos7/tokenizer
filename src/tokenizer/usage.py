@@ -11,6 +11,7 @@ FIVE_HOURS = timedelta(hours=5)
 WEEK = timedelta(days=7)
 
 LIMITS_PERCENT = {"5h": 20.0, "weekly": 50.0, "monthly": 100.0}
+WINDOW_LABELS = {"5h": "5 horas", "weekly": "Semanal", "monthly": "Mensual"}
 
 
 @dataclass(frozen=True)
@@ -29,14 +30,14 @@ def utc(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
 
-def record_percent(record: UsageRecord, prices: dict[str, ModelPrice]) -> float:
+def record_percent(record: UsageRecord, prices: dict[str, ModelPrice], factor: float = 1.0) -> float:
     """Porcentaje del límite mensual del plan que consume una petición."""
     if record.provider != PROVIDER:
         return 0.0
     price = prices.get(record.model)
     if price is None or not price.monthly_limit:
         return 0.0
-    return price.cost(record) / price.monthly_limit * 100
+    return price.cost(record) / price.monthly_limit * 100 * factor
 
 
 def start_of_week(now: datetime) -> datetime:
@@ -73,11 +74,12 @@ def compute_windows(
     prices: dict[str, ModelPrice],
     now: datetime | None = None,
     renews_at: datetime | None = None,
+    factor: float = 1.0,
 ) -> list[Window]:
     """Calcula los tres límites de Go: 5 h (desde el primer uso), semanal y mensual."""
     now = now or datetime.now(timezone.utc)
     events = sorted(
-        ((utc(r.created_ms), record_percent(r, prices)) for r in records),
+        ((utc(r.created_ms), record_percent(r, prices, factor)) for r in records),
         key=lambda event: event[0],
     )
 
@@ -128,13 +130,14 @@ def usage_by_model(
     prices: dict[str, ModelPrice],
     since: datetime,
     until: datetime | None = None,
+    factor: float = 1.0,
 ) -> dict[str, float]:
     totals: dict[str, float] = {}
     for record in records:
         moment = utc(record.created_ms)
         if moment < since or (until is not None and moment >= until):
             continue
-        percent = record_percent(record, prices)
+        percent = record_percent(record, prices, factor)
         if percent:
             totals[record.model] = totals.get(record.model, 0.0) + percent
     return dict(sorted(totals.items(), key=lambda item: item[1], reverse=True))

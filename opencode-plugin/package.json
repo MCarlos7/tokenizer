@@ -1,0 +1,16 @@
+{
+  "name": "opencode-tokenizer",
+  "version": "0.1.0",
+  "description": "Arranca Tokenizer al abrir OpenCode para monitorizar el consumo de OpenCode Go.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  }
+}
