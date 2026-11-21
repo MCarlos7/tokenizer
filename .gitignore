@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secretos y configuración local (claves, tokens de servidor, rutas privadas)
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+config.local.*
+tokenizer.local.toml
+
+# Datos de uso generados (contienen tu historial de consumo)
+usage-*.json
+prices*.json
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
