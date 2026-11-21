@@ -27,6 +27,7 @@ from tokenizer.host_store import HostStore, record_to_dict
 from tokenizer.notify import notify
 from tokenizer.opencode_db import UsageRecord, read_usage
 from tokenizer.peers import Peer, PeerTable, decode_heartbeat, encode_heartbeat, should_yield, token_fingerprint
+from tokenizer.pairing import pairing_open
 from tokenizer.pricing import load_prices
 from tokenizer.server import TOKEN_HEADER, TokenizerHTTPServer, build_status
 
@@ -107,7 +108,13 @@ class Daemon:
     def _send_heartbeat(self) -> None:
         if self.sock is None:
             return
-        payload = encode_heartbeat(self.settings.machine, self.role, DEFAULT_PORT, self.fingerprint)
+        payload = encode_heartbeat(
+            self.settings.machine,
+            self.role,
+            DEFAULT_PORT,
+            self.fingerprint,
+            pairing=self.role == "host" and pairing_open(),
+        )
         try:
             self.sock.sendto(payload, ("255.255.255.255", DISCOVERY_PORT))
         except OSError as error:

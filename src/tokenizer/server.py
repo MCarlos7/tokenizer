@@ -10,6 +10,7 @@ from typing import Any, Callable
 from tokenizer.config import PEER_TIMEOUT_SECONDS, Settings
 from tokenizer.host_store import HostStore, record_from_dict
 from tokenizer.opencode_db import UsageRecord
+from tokenizer.pairing import redeem
 from tokenizer.peers import PeerTable
 from tokenizer.pricing import ModelPrice
 from tokenizer.usage import WINDOW_LABELS, Window, compute_windows, utc
@@ -186,6 +187,9 @@ class TokenizerHandler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8", render_panel(status).encode("utf-8"))
 
     def do_POST(self) -> None:
+        if self.path == "/api/pair":
+            self._handle_pair()
+            return
         if self.path != "/api/usage":
             self._send_json(404, {"error": "No encontrado"})
             return
@@ -207,3 +211,29 @@ class TokenizerHandler(BaseHTTPRequestHandler):
             return
         stored = self.server.store.upsert(machine, records)
         self._send_json(200, {"stored": stored})
+
+    def _handle_pair(self) -> None:
+        settings = self.server.load_settings()
+        if not settings.token:
+            self._send_json(503, {"error": "Este host no tiene red configurada"})
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > MAX_BODY_BYTES:
+            self._send_json(413, {"error": "Cuerpo vacío o demasiado grande"})
+            return
+        try:
+            code = str(json.loads(self.rfile.read(length).decode("utf-8"))["code"])
+        except (ValueError, KeyError, TypeError):
+            self._send_json(400, {"error": "Formato no válido"})
+            return
+        if not redeem(code):
+            self._send_json(403, {"error": "Código no válido, caducado o ya usado"})
+            return
+        self._send_json(
+            200,
+            {
+                "token": settings.token,
+                "plan": settings.plan,
+                "renews_at": settings.renews_at.isoformat() if settings.renews_at else None,
+            },
+        )

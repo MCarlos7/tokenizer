@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from tokenizer.config import (
     host_db_path,
     load_settings,
     load_user_config,
+    machine_name,
     parse_datetime,
     save_user_config,
     user_config_path,
@@ -20,6 +22,7 @@ from tokenizer.config import (
 from tokenizer.daemon import Daemon
 from tokenizer.host_store import HostStore
 from tokenizer.opencode_db import read_usage
+from tokenizer.pairing import find_pairing_host, new_token, open_pairing, request_pairing
 from tokenizer.pricing import load_prices
 from tokenizer.usage import billing_period, compute_windows, record_percent, usage_by_model, utc
 
@@ -33,16 +36,95 @@ def _format_reset(moment: datetime | None, now: datetime) -> str:
     return f"en {hours} h {minutes:02d} min ({moment:%d/%m %H:%M} UTC)"
 
 
-def _require_token() -> bool:
+def _ask(prompt: str, default: str) -> str:
+    if not sys.stdin.isatty():
+        return default
+    try:
+        value = input(f"{prompt} [{default}]: ").strip()
+    except EOFError:
+        return default
+    return value or default
+
+
+def _ask_mode() -> str:
+    answer = _ask("¿Es el primer equipo de tu red? (s = sí, crear red / n = unirme a una red)", "s")
+    return "new" if answer.lower().startswith("s") else "join"
+
+
+def _ensure_configured() -> bool:
     if load_settings().token:
         return True
-    print("Falta el token compartido. Configúralo igual en todos los equipos:")
-    print("  tokenizer config --token TU_TOKEN")
-    return False
+    if not sys.stdin.isatty():
+        print("Tokenizer no está configurado. Ejecuta: tokenizer setup --new  (o --join)")
+        return False
+    print("Primera configuración de Tokenizer.")
+    return cmd_setup(argparse.Namespace(new=False, join=False, machine=None, plan=None, renews_at=None, reset_token=False)) == 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    if args.new and args.join:
+        print("Elige --new o --join, no ambos.")
+        return 1
+    current = load_user_config()
+    mode = "new" if args.new else "join" if args.join else _ask_mode()
+    machine = args.machine or _ask("Nombre de este equipo", current.get("machine") or machine_name())
+
+    if mode == "new":
+        updates: dict[str, object] = {"machine": machine}
+        plan = args.plan or _ask("Plan de Go", current.get("plan", "go"))
+        if plan not in PLANS:
+            print(f"Plan no válido. Opciones: {', '.join(PLANS)}")
+            return 1
+        updates["plan"] = plan
+        renews_default = current.get("renews_at", "")
+        renews = args.renews_at.isoformat() if args.renews_at else _ask(
+            "Próxima renovación de Go (AAAA-MM-DDTHH:MM, UTC; vacío = no definida)", renews_default
+        )
+        if renews:
+            updates["renews_at"] = parse_datetime(renews).isoformat()
+        if current.get("token") and not args.reset_token:
+            print("Ya existe una red en este equipo; se conserva el token actual.")
+        else:
+            updates["token"] = new_token()
+            print("Red nueva creada. Usa 'tokenizer pair' en este equipo para añadir otros.")
+        save_user_config(updates)
+    else:
+        print("Buscando un host con código de emparejamiento (espera ~1 min)...")
+        host = find_pairing_host(timeout=60)
+        if host is None:
+            print("No encontré ningún host. En el host ejecuta 'tokenizer pair' y Tokenizer en marcha.")
+            return 1
+        print(f"Host encontrado: {host.machine} ({host.address}).")
+        code = _ask("Código de emparejamiento (XXXX-XXXX)", "")
+        try:
+            result = request_pairing(host, code)
+        except (urllib.error.URLError, OSError) as error:
+            print(f"No se pudo emparejar: {error}")
+            return 1
+        updates = {"machine": machine, "token": result["token"], "plan": result["plan"]}
+        if result.get("renews_at"):
+            updates["renews_at"] = result["renews_at"]
+        save_user_config(updates)
+        print("Emparejado. Este equipo ya comparte la configuración del host.")
+
+    print(f"Configuración guardada en {user_config_path()}")
+    print("Arranca Tokenizer con: tokenizer start")
+    return 0
+
+
+def cmd_pair(args: argparse.Namespace) -> int:
+    if not load_settings().token:
+        print("Primero crea la red en este equipo: tokenizer setup --new")
+        return 1
+    code = open_pairing()
+    print(f"Código de emparejamiento: {code}")
+    print("Válido 10 minutos y de un solo uso. Introdúcelo en el otro equipo con: tokenizer setup --join")
+    print("Deja Tokenizer en ejecución en este equipo mientras se empareja.")
+    return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    if not _require_token():
+    if not _ensure_configured():
         return 1
     try:
         Daemon(load_settings()).run()
@@ -56,7 +138,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    if not _require_token():
+    if not _ensure_configured():
         return 1
     directory = cache_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -124,8 +206,6 @@ def cmd_config(args: argparse.Namespace) -> int:
         changes["plan"] = args.plan
     if args.db:
         changes["db"] = str(args.db)
-    if args.token:
-        changes["token"] = args.token
     if args.machine:
         changes["machine"] = args.machine
     if args.alert_percent is not None:
@@ -136,7 +216,7 @@ def cmd_config(args: argparse.Namespace) -> int:
 
     settings = load_user_config()
     if not settings:
-        print("Sin configuración. Ejemplo: tokenizer config --token TU_TOKEN --renews-at 2026-12-18T23:00Z")
+        print("Sin configuración. Ejecuta: tokenizer setup --new")
         return 0
     for key, value in settings.items():
         shown = "********" if key == "token" else value
@@ -169,6 +249,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(handler=cmd_run)
     subcommands = parser.add_subparsers(dest="command")
 
+    setup = subcommands.add_parser("setup", help="Configura este equipo: crear una red o unirse a una.")
+    setup.add_argument("--new", action="store_true", help="Este es el primer equipo: crea la red.")
+    setup.add_argument("--join", action="store_true", help="Unirse a una red existente con un código.")
+    setup.add_argument("--machine", default=None, help="Nombre de este equipo.")
+    setup.add_argument("--plan", choices=PLANS, default=None, help="Plan de Go (solo al crear la red).")
+    setup.add_argument("--renews-at", type=parse_datetime, default=None, help="Próxima renovación de Go (UTC).")
+    setup.add_argument("--reset-token", action="store_true", help="Genera un token nuevo (los demás equipos deberán volver a emparejarse).")
+    setup.set_defaults(handler=cmd_setup)
+
+    pair = subcommands.add_parser("pair", help="En el host: genera un código para añadir un equipo.")
+    pair.set_defaults(handler=cmd_pair)
+
     run = subcommands.add_parser("run", help="Ejecuta Tokenizer en primer plano (predeterminado).")
     run.set_defaults(handler=cmd_run)
 
@@ -180,9 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--plan", choices=PLANS, default=None, help="Plan de Go contratado.")
     status.set_defaults(handler=cmd_status)
 
-    config = subcommands.add_parser("config", help="Guarda o muestra tu configuración personal.")
-    config.add_argument("--token", default=None, help="Token compartido de la red (igual en todos los equipos).")
-    config.add_argument("--machine", default=None, help="Nombre de este equipo (único en la red).")
+    config = subcommands.add_parser("config", help="Muestra o cambia opciones de este equipo.")
+    config.add_argument("--machine", default=None, help="Nombre de este equipo.")
     config.add_argument("--renews-at", type=parse_datetime, default=None, help="Próxima renovación de Go (UTC).")
     config.add_argument("--plan", choices=PLANS, default=None, help="Plan de Go contratado.")
     config.add_argument("--db", type=Path, default=None, help="Ruta a opencode.db.")

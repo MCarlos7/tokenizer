@@ -22,6 +22,7 @@ class Peer:
     address: str
     port: int
     last_seen: float
+    pairing: bool = False
 
 
 class PeerTable:
@@ -42,7 +43,7 @@ class PeerTable:
         return [peer for peer in self.fresh(timeout, now) if peer.role == "host"]
 
 
-def encode_heartbeat(machine: str, role: str, port: int, fingerprint: str) -> bytes:
+def encode_heartbeat(machine: str, role: str, port: int, fingerprint: str, pairing: bool = False) -> bytes:
     payload = {
         "app": "tokenizer",
         "v": PROTOCOL_VERSION,
@@ -50,23 +51,29 @@ def encode_heartbeat(machine: str, role: str, port: int, fingerprint: str) -> by
         "role": role,
         "port": port,
         "fp": fingerprint,
+        "pairing": pairing,
     }
     return json.dumps(payload).encode("utf-8")
 
 
-def decode_heartbeat(raw: bytes, address: str, fingerprint: str, now: float) -> Peer | None:
+def decode_heartbeat(raw: bytes, address: str, fingerprint: str | None, now: float) -> Peer | None:
+    """Con fingerprint=None solo acepta hosts que anuncian emparejamiento (equipos sin token)."""
     try:
         data = json.loads(raw.decode("utf-8"))
     except ValueError:
         return None
-    if not isinstance(data, dict):
-        return None
-    if data.get("app") != "tokenizer" or data.get("v") != PROTOCOL_VERSION or data.get("fp") != fingerprint:
+    if not isinstance(data, dict) or data.get("app") != "tokenizer" or data.get("v") != PROTOCOL_VERSION:
         return None
     machine, role, port = data.get("machine"), data.get("role"), data.get("port")
     if not isinstance(machine, str) or role not in ROLES or not isinstance(port, int):
         return None
-    return Peer(machine=machine, role=role, address=address, port=port, last_seen=now)
+    pairing = data.get("pairing") is True
+    if fingerprint is None:
+        if not (pairing and role == "host"):
+            return None
+    elif data.get("fp") != fingerprint:
+        return None
+    return Peer(machine=machine, role=role, address=address, port=port, last_seen=now, pairing=pairing)
 
 
 def should_yield(own_machine: str, other_machine: str) -> bool:

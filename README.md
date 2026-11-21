@@ -29,7 +29,7 @@ Tokenizer lee el historial local de OpenCode (`opencode.db`) en modo solo lectur
 
 - Windows 10/11.
 - Python 3.10 o superior.
-- Todos los equipos de la red deben usar el **mismo token** y estar en la misma red local.
+- Todos los equipos deben estar en la misma red local.
 
 ## Instalación
 
@@ -43,20 +43,46 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-Configura tu equipo (una sola vez):
+### Primer equipo (crea la red)
 
 ```powershell
-tokenizer config --token TU_TOKEN_COMPARTIDO --machine NOMBRE-DEL-EQUIPO --renews-at 2026-12-18T23:00Z --plan go
+tokenizer setup --new
 ```
 
-- `--token`: el mismo en todos los equipos. No lo subas al repositorio.
-- `--machine`: nombre único de cada equipo. Por defecto usa el nombre de Windows.
-- `--renews-at`: próxima renovación de Go (UTC). Define el periodo mensual.
-- `--plan`: `go`, `go-plus` o `go-teams`.
+Pregunta el nombre del equipo, el plan de Go y la próxima renovación. Genera un token criptográfico automáticamente; nunca se muestra en pantalla.
 
-La configuración se guarda en `%APPDATA%\tokenizer\config.json`, fuera del repositorio.
+### Añadir otro equipo (emparejamiento)
+
+1. En el **host**, con Tokenizer en marcha, ejecuta:
+   ```powershell
+   tokenizer pair
+   ```
+   Muestra un código de 8 caracteres, válido 10 minutos y de un solo uso.
+2. En el **nuevo equipo**, instala Tokenizer y ejecuta:
+   ```powershell
+   tokenizer setup --join
+   ```
+   Busca el host automáticamente y te pide el código. El nuevo equipo recibe el token y la configuración del plan.
+
+Si ejecutas `tokenizer` sin configurar, te guía por la primera configuración.
+
+### Seguridad del emparejamiento
+
+- El código se guarda solo como hash con sal. Caduca a los 10 minutos.
+- Se bloquea tras 5 intentos fallidos.
+- El token nunca viaja por el código ni se muestra; solo se entrega al equipo que presenta un código válido.
+- El token se guarda en `%APPDATA%\tokenizer\config.json`, fuera del repositorio. Quien tenga acceso a tu usuario de Windows puede leerlo; no lo compartas.
 
 Windows pedirá permiso de firewall la primera vez. Acepta el acceso en redes privadas para los puertos 8765 y 8766.
+
+### Opciones
+
+```powershell
+tokenizer config                       # muestra la configuración (el token aparece oculto)
+tokenizer config --machine NOMBRE      # cambia el nombre de este equipo
+tokenizer config --renews-at 2026-12-18T23:00Z
+tokenizer setup --new --reset-token    # genera un token nuevo; los demás equipos deberán emparejarse otra vez
+```
 
 ## Uso
 
